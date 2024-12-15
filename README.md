@@ -65,16 +65,10 @@ pip install -r requirements.txt
 ### 🔑 4. API配置
 
 1. 创建配置文件：
-```bash
-# Windows
-copy .env.example .env
-
-# macOS/Linux
-cp .env.example .env
-```
+- 在项目根目录下创建一个名为`.env`的文件。
 
 2. 配置API密钥：
-   使用文本编辑器打开`.env`文件，填入以下内容：
+- 在`.env`文件，填入以下内容：
 ```env
 # OpenAI API配置
 OPENAI_API_KEY=你的OpenAI API密钥

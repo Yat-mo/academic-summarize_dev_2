@@ -1,7 +1,10 @@
 from openai import AsyncOpenAI
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Dict, Any
 import asyncio
 import hashlib
+import json
+import os
+import time
 from datetime import datetime, timedelta
 from config import APIConfig
 from prompts import get_prompts
@@ -21,7 +24,69 @@ class AIHandler:
             base_url=api_base or self.config["api_base"]
         )
         
-        print(f"初始化AI处理器: {provider}")  # 添加日志
+        # 初始化缓存
+        self.cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
+        self.cache_expiry = timedelta(days=7)  # 缓存7天过期
+        self._init_cache()
+        
+        print(f"初始化AI处理器: {provider}")
+    
+    def _init_cache(self):
+        """初始化缓存目录"""
+        try:
+            if not os.path.exists(self.cache_dir):
+                os.makedirs(self.cache_dir)
+                print(f"创建缓存目录: {self.cache_dir}")
+        except Exception as e:
+            print(f"创建缓存目录失败: {str(e)}")
+    
+    def _get_cache_path(self, prompt_hash: str) -> str:
+        """获取缓存文件路径"""
+        return os.path.join(self.cache_dir, f"{prompt_hash}.json")
+    
+    def _read_cache(self, prompt_hash: str) -> Optional[str]:
+        """读取缓存"""
+        try:
+            cache_path = self._get_cache_path(prompt_hash)
+            if not os.path.exists(cache_path):
+                return None
+            
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+            
+            # 检查缓存是否过期
+            cache_time = datetime.fromtimestamp(cache_data['timestamp'])
+            if datetime.now() - cache_time > self.cache_expiry:
+                os.remove(cache_path)  # 删除过期缓存
+                return None
+            
+            return cache_data['result']
+            
+        except Exception as e:
+            print(f"读取缓存失败: {str(e)}")
+            return None
+    
+    def _write_cache(self, prompt_hash: str, result: str):
+        """写入缓存"""
+        try:
+            cache_path = self._get_cache_path(prompt_hash)
+            cache_data = {
+                'timestamp': time.time(),
+                'result': result
+            }
+            
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                
+        except Exception as e:
+            print(f"写入缓存失败: {str(e)}")
+    
+    def _calculate_hash(self, prompt: str, **kwargs) -> str:
+        """计算提示词和参数的哈希值"""
+        # 将所有参数组合成一个字符串
+        params_str = json.dumps(kwargs, sort_keys=True)
+        content = f"{prompt}|{params_str}|{self.provider}"
+        return hashlib.md5(content.encode()).hexdigest()
     
     async def process_text(self, text: str, prompt_template: str) -> str:
         """处理单个文本块"""
@@ -29,7 +94,7 @@ class AIHandler:
             if not text or not prompt_template:
                 raise ValueError("文本或提示词模板不能为空")
             
-            print(f"处理文本块: 长度={len(text)}")  # 添加日志
+            print(f"处理文本块: 长度={len(text)}")
             
             # 格式化提示词
             prompt = prompt_template.format(text=text)
@@ -40,26 +105,48 @@ class AIHandler:
             if not result:
                 raise Exception("API返回结果为空")
             
-            print(f"处理完成: 结果长度={len(result)}")  # 添加日志
+            print(f"处理完成: 结果长度={len(result)}")
             return result
             
         except Exception as e:
-            print(f"处理文本失败: {str(e)}")  # 添加日志
+            print(f"处理文本失败: {str(e)}")
             raise Exception(f"处理文本失败: {str(e)}")
     
-    async def get_completion_with_cache(self, prompt: str) -> str:
+    async def get_completion_with_cache(
+        self, 
+        prompt: str,
+        max_tokens: int = None,
+        temperature: float = None
+    ) -> str:
         """获取API响应（带缓存）"""
         try:
-            # 计算提示词的哈希值
-            prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
+            # 计算缓存键
+            cache_key = self._calculate_hash(
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
             
-            # TODO: 实现缓存逻辑
+            # 尝试从缓存获取
+            cached_result = self._read_cache(cache_key)
+            if cached_result is not None:
+                print("使用缓存结果")
+                return cached_result
             
             # 调用API
-            return await self.get_completion(prompt)
+            result = await self.get_completion(
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            # 写入缓存
+            self._write_cache(cache_key, result)
+            
+            return result
             
         except Exception as e:
-            print(f"API调用失败: {str(e)}")  # 添加日志
+            print(f"API调用失败: {str(e)}")
             raise
     
     async def get_completion(self, prompt: str, max_tokens: int = None, temperature: float = None) -> str:
@@ -158,7 +245,7 @@ class AIHandler:
         try:
             return await self.merge_summaries(chunk_summaries, prompts["merge_prompt"])
         except Exception as e:
-            raise Exception(f"合并总结失败: {str(e)}")
+            raise Exception(f"���并总结失败: {str(e)}")
 
     async def merge_summaries(
         self, 

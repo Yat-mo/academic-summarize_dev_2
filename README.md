@@ -36,7 +36,7 @@
 1. 克隆仓库：
 ```bash
 git clone https://github.com/Yat-mo/academic-summarize_dev_2
-cd academic-summarize
+cd academic-summarize_dev_2
 ```
 
 2. 创建虚拟环境（推荐）：
